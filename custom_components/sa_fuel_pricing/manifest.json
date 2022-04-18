@@ -1,0 +1,7 @@
+{
+    "domain": "sa_fuel_pricing",
+    "name": "SA Fuel Pricing",
+    "documentation": "https://",
+    "iot_class": "cloud_polling",
+    "version": "0.1"
+}
