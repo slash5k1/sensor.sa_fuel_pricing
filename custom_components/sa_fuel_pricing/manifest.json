@@ -3,5 +3,6 @@
     "name": "SA Fuel Pricing",
     "documentation": "https://",
     "iot_class": "cloud_polling",
-    "version": "0.1"
+    "version": "0.1",
+    "requirements": ["python-dateutil==2.8.2"]
 }
