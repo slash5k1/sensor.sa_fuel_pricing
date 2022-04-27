@@ -3,7 +3,7 @@
 ## Code to query SAGov Fuel Pricing API - Slash5k1
 ##
 ## 1) Instantiate SAFuelPriceBook with token_id
-## 2) await get_fuel_pricing()
+## 2) await async_get_fuel_pricing()
 ##    - Query SAGov Fuel Pricing API
 ##    - Build dictionary of objects (fuel_type, fuel, fuel_station) - order matters
 ##    - Returns result from self.pricing
@@ -16,17 +16,21 @@ from dateutil import tz
 
 import aiohttp
 import asyncio
+import socket
+import async_timeout
 
 from functools import wraps
 import time
 
 import ssl
 import certifi
-ssl_context = ssl.create_default_context()
-ssl_context.load_verify_locations(certifi.where())
+SSL_CONTEXT = ssl.create_default_context()
+SSL_CONTEXT.load_verify_locations(certifi.where())
 
 import logging
 _LOGGER = logging.getLogger(__name__)
+
+TIMEOUT = 10
 ####################################################################################################
 prod_url = 'https://fppdirectapi-prod.safuelpricinginformation.com.au'
 
@@ -85,14 +89,16 @@ class fuel(object):
         return self.__str__()
 
 class SAFuelPriceBook():
-    def __init__(self, token_id, debug=False):
-        self._token_id = token_id
-        self._headers = {'Authorization': f'FPDAPI SubscriberToken={self._token_id}'}
+    def __init__(self, token_id: str, session: aiohttp.ClientSession, debug=False) -> None:
+        self._headers = {'Authorization': f'FPDAPI SubscriberToken={token_id}'}
         self._debug = debug
+        self._session = session
 
         self._fuel_type_dict = None
         self._fuel_dict = None
         self._fuel_station_dict = None
+
+        self.dprint(" - Initialising SAFuelPriceBook")
 
     @property
     def pricing(self):
@@ -117,16 +123,30 @@ class SAFuelPriceBook():
 
     @measure
     async def return_json_data(self, key):
-        async with aiohttp.ClientSession(headers=self._headers) as session:
-            try:
-                self.dprint(f"pulling data from - {prod_url + urls[key]['url']}")
-                async with session.get(prod_url + urls[key]['url'], ssl=ssl_context) as response:
-                    json_response = await response.json()
-            except Exception as e:
-                print (e)
-                return None
-            else:
-                return json_response[key]
+        url = prod_url + urls[key]['url']
+        
+        try:
+            async with async_timeout.timeout(TIMEOUT):
+                self.dprint(f"pulling data from - {url}")
+                _response = await self._session.get(url, headers=self._headers, ssl=SSL_CONTEXT)
+                response = await _response.json()
+                return response[key]
+
+        except asyncio.TimeoutError as exception:
+            self.dprint(f"Timeout error fetching information from {url} - {exception}")
+
+        except (KeyError, TypeError) as exception:
+            self.dprint(f"Error parsing information from {url} - {exception}")
+
+        except (aiohttp.ClientError, socket.gaierror) as exception:
+            self.dprint(f"Error fetching information from {url} - {exception}")
+
+        except Exception as exception:  # pylint: disable=broad-except
+            self.dprint(f"Something really wrong happened! - {exception}")
+
+        # else:
+        #     self.dprint(response.json()[key])
+        #     return await response.json()[key]
 
     # Example json_data
     # {"Fuels": [{"FuelId": 2, "Name": "Unleaded"}]}
@@ -187,7 +207,8 @@ class SAFuelPriceBook():
         return dict_of_fuel_stations
 
     @measure
-    async def update_fuel_pricing(self):
+    async def async_update_fuel_pricing(self):
+        self.dprint(" - Updating SAFuelPriceBook")
         fuel_type = asyncio.create_task(self.return_json_data("Fuels"))
         fuel = asyncio.create_task(self.return_json_data("SitePrices"))
         fuel_stations = asyncio.create_task(self.return_json_data("S"))
@@ -197,8 +218,10 @@ class SAFuelPriceBook():
         self._fuel_type_dict = self.return_dict_of_fuel_types(fuel_type.result())
         self._fuel_dict = self.return_dict_of_fuel(fuel.result())
         self._fuel_station_dict = self.return_dict_of_fuel_stations(fuel_stations.result())
+        self.dprint(" - SAFuelPriceBook Updated")
 
     @measure
-    async def get_fuel_pricing(self):
-        await self.update_fuel_pricing()
+    async def async_get_fuel_pricing(self):
+        await self.async_update_fuel_pricing()
+        self.dprint(" - Return SAFuelPriceBook Pricing")
         return self.pricing
